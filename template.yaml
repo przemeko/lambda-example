@@ -1,0 +1,101 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: "HelloWorld example Lambda"
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 3
+
+Resources:
+  HelloWorldFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties: # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-lambda-function.html
+      FunctionName: hello-world-lambda
+      CodeUri: hello-world/
+      Handler: app.lambdaHandler
+      Runtime: nodejs12.x
+      Events:
+        HelloWorldSqsEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt HelloWorldSqsQueue.Arn
+            BatchSize: 1
+
+  HelloWorldSqsQueue:
+    Type: AWS::SQS::Queue
+    Properties: # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-sqs-queues.html
+      QueueName: hello-world-queue-sqs
+      VisibilityTimeout: 30 # The length of time (in seconds) during which a message will be unavailable after a message is delivered from the queue.
+      MessageRetentionPeriod: 60 # The number of seconds that Amazon SQS retains a message. Value from 60 seconds (1 minute) to 1,209,600 seconds (14 days)
+      # Why we need dlq (Dead-Letter queue): https://dev.to/piczmar_0/error-handling-in-aws-lambda-trigger-by-sqs-events-3amp
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt HelloWorldDlqSqsQueue.Arn
+        maxReceiveCount: 1
+
+  HelloWorldDlqSqsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: hello-world-dlq-queue-sqs
+      MessageRetentionPeriod: 1209600 # 14 days in seconds
+
+  HelloWorldEmailSns:
+    Type: AWS::SNS::Topic
+    Properties: # https://docs.aws.amazon.com/en_uw/AWSCloudFormation/latest/UserGuide/aws-properties-sns-topic.html
+      TopicName: hello-world-email-sns
+      Subscription: # https://docs.aws.amazon.com/sns/latest/api/API_Subscribe.html
+        - Protocol: email
+          Endpoint: put_your@email.here
+
+  # CloudWatch concepts
+  # https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/cloudwatch_concepts.html
+  HelloWorldLambdaFailAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties: # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-cw-alarm.html
+      AlarmName: hello-world-lambda-fail-alarm
+      AlarmDescription: "Alarm if lambda fails"
+      # A namespace is a container for CloudWatch metrics.
+      # Full list: https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/aws-services-cloudwatch-metrics.html
+      Namespace: AWS/Lambda
+      # Metrics are the fundamental concept in CloudWatch. A metric represents a time-ordered set of data points that are published to CloudWatch
+      # https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/viewing_metrics_with_cloudwatch.html
+      # aws cloudwatch list-metrics --namespace AWS/Lambda
+      MetricName: Errors
+      # A dimension is a name/value pair that is part of the identity of a metric. You can assign up to 10 dimensions to a metric.
+      # "Name" and "Value" can be found here: aws cloudwatch list-metrics --namespace AWS/Lambda
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref HelloWorldFunction
+      # Statistics are metric data aggregations over specified periods of time.
+      # Aggregations are made using the namespace, metric name, dimensions, and the data point unit of measure, within the time period you specify.
+      # Allowed values: Minimum | Maximum | Sum | Average | SampleCount | pNN.NN
+      Statistic: Sum
+      # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-cw-alarm.html#cfn-cloudwatch-alarms-comparisonoperator
+      # Allowed Values: GreaterThanOrEqualToThreshold | GreaterThanThreshold | GreaterThanUpperThreshold | LessThanLowerOrGreaterThanUpperThreshold | LessThanLowerThreshold | LessThanOrEqualToThreshold | LessThanThreshold
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: 0
+      # The period, in seconds, over which the statistic is applied
+      Period: 60
+      # The number of periods over which data is compared to the specified threshold
+      EvaluationPeriods: 1
+      # https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/AlarmThatSendsEmail.html#alarms-and-missing-data
+      # Allowed values: notBreaching | breaching | ignore | missing
+      TreatMissingData: "notBreaching"
+      # The list of actions to execute when this alarm transitions into an ALARM state from any other state.
+      # Specify each action as an Amazon Resource Name (ARN)
+      AlarmActions:
+        - !Ref HelloWorldEmailSns
+
+Outputs:
+  # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
+  # Find out more about other implicit resources you can reference within SAM
+  # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
+  HelloWorldFunction:
+    Description: "Hello World Lambda Function ARN"
+    Value: !GetAtt HelloWorldFunction.Arn
+  HelloWorldFunctionIamRole:
+    Description: "Implicit IAM Role created for Hello World function"
+    Value: !GetAtt HelloWorldFunctionRole.Arn
+  HelloWorldSqsQueueName:
+    Description: "SQS queue arn"
+    Value: !GetAtt HelloWorldSqsQueue.Arn
